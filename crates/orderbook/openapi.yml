@@ -1600,14 +1600,14 @@ components:
         auctionId:
           type: integer
           description: The ID of the auction the competition info is for.
-        transactionHash:
-          type: string
-          nullable: true
-          allOf:
-            - $ref: "#/components/schemas/TransactionHash"
-          description: >-
-            The hash of the transaction that the winning solution of this info
-            was submitted in.
+        transactionHashes:
+          type: array
+          items:
+            $ref: "#/components/schemas/TransactionHash"
+          description: |-
+            Hashes of the transactions in which the winning solutions were
+            submitted. This list is empty if no settlement has been observed
+            yet.
         gasPrice:
           type: number
           description: Gas price used for ranking solutions.
@@ -1635,6 +1635,14 @@ components:
 
             This field is missing for old settlements, the zero address has been
             used instead.
+        transactionHash:
+          type: string
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/TransactionHash"
+          description: >-
+            Hash of the transaction in which this solver's settlement was
+            executed, if available.
         objective:
           type: object
           properties:

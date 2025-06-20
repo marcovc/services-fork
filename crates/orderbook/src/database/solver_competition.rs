@@ -2,7 +2,7 @@ use {
     super::Postgres,
     crate::solver_competition::{Identifier, LoadSolverCompetitionError, SolverCompetitionStoring},
     anyhow::{Context, Result},
-    database::byte_array::ByteArray,
+    database::{self, byte_array::ByteArray},
     model::{
         auction::AuctionId,
         solver_competition::{SolverCompetitionAPI, SolverCompetitionDB},
@@ -25,6 +25,20 @@ fn deserialize_solver_competition(
     })
 }
 
+async fn attach_solution_hashes(
+    ex: &mut sqlx::PgConnection,
+    auction_id: AuctionId,
+    competition: &mut SolverCompetitionAPI,
+) -> Result<()> {
+    for solution in &mut competition.common.solutions {
+        let address: database::Address = ByteArray(solution.solver_address.0);
+        if let Some(hash) = database::settlements::find_settlement_transaction(ex, auction_id, address).await? {
+            solution.transaction_hash = Some(H256(hash.0));
+        }
+    }
+    Ok(())
+}
+
 #[async_trait::async_trait]
 impl SolverCompetitionStoring for Postgres {
     async fn load_competition(
@@ -37,31 +51,35 @@ impl SolverCompetitionStoring for Postgres {
             .start_timer();
 
         let mut ex = self.pool.acquire().await.map_err(anyhow::Error::from)?;
-        match id {
-            Identifier::Id(id) => database::solver_competition::load_by_id(&mut ex, id)
-                .await
-                .context("solver_competition::load_by_id")?
-                .map(|row| {
+        let mut competition = match id {
+            Identifier::Id(id) => {
+                let row = database::solver_competition::load_by_id(&mut ex, id)
+                    .await
+                    .context("solver_competition::load_by_id")?;
+                row.map(|row| {
                     deserialize_solver_competition(
                         row.json,
                         row.id,
                         row.tx_hashes.iter().map(|hash| H256(hash.0)).collect(),
                     )
-                }),
+                })
+            }
             Identifier::Transaction(hash) => {
-                database::solver_competition::load_by_tx_hash(&mut ex, &ByteArray(hash.0))
+                let row = database::solver_competition::load_by_tx_hash(&mut ex, &ByteArray(hash.0))
                     .await
-                    .context("solver_competition::load_by_tx_hash")?
-                    .map(|row| {
-                        deserialize_solver_competition(
-                            row.json,
-                            row.id,
-                            row.tx_hashes.iter().map(|hash| H256(hash.0)).collect(),
-                        )
-                    })
+                    .context("solver_competition::load_by_tx_hash")?;
+                row.map(|row| {
+                    deserialize_solver_competition(
+                        row.json,
+                        row.id,
+                        row.tx_hashes.iter().map(|hash| H256(hash.0)).collect(),
+                    )
+                })
             }
         }
-        .ok_or(LoadSolverCompetitionError::NotFound)?
+        .ok_or(LoadSolverCompetitionError::NotFound)?;
+        attach_solution_hashes(&mut ex, competition.auction_id, &mut competition).await?;
+        Ok(competition)
     }
 
     async fn load_latest_competition(
@@ -73,9 +91,10 @@ impl SolverCompetitionStoring for Postgres {
             .start_timer();
 
         let mut ex = self.pool.acquire().await.map_err(anyhow::Error::from)?;
-        database::solver_competition::load_latest_competition(&mut ex)
+        let row = database::solver_competition::load_latest_competition(&mut ex)
             .await
-            .context("solver_competition::load_latest_competition")?
+            .context("solver_competition::load_latest_competition")?;
+        let mut competition = row
             .map(|row| {
                 deserialize_solver_competition(
                     row.json,
@@ -83,7 +102,9 @@ impl SolverCompetitionStoring for Postgres {
                     row.tx_hashes.iter().map(|hash| H256(hash.0)).collect(),
                 )
             })
-            .ok_or(LoadSolverCompetitionError::NotFound)?
+            .ok_or(LoadSolverCompetitionError::NotFound)?;
+        attach_solution_hashes(&mut ex, competition.auction_id, &mut competition).await?;
+        Ok(competition)
     }
 
     async fn load_latest_competitions(
@@ -97,7 +118,7 @@ impl SolverCompetitionStoring for Postgres {
 
         let mut ex = self.pool.acquire().await.map_err(anyhow::Error::from)?;
 
-        let latest_competitions = database::solver_competition::load_latest_competitions(
+        let mut latest_competitions = database::solver_competition::load_latest_competitions(
             &mut ex,
             latest_competitions_count,
         )
@@ -112,6 +133,10 @@ impl SolverCompetitionStoring for Postgres {
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
+
+        for competition in &mut latest_competitions {
+            attach_solution_hashes(&mut ex, competition.auction_id, competition).await?;
+        }
 
         Ok(latest_competitions)
     }
