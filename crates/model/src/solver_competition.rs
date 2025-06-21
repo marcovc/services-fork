@@ -45,6 +45,9 @@ pub struct SolverSettlement {
     pub solver: String,
     #[serde(default)]
     pub solver_address: H160,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transaction_hash: Option<H256>,
     #[serde(flatten)]
     pub score: Option<Score>,
     #[serde(default)]
@@ -193,6 +196,7 @@ mod tests {
                 solutions: vec![SolverSettlement {
                     solver: "2".to_string(),
                     solver_address: H160([0x22; 20]),
+                    transaction_hash: None,
                     score: Some(Score::Solver(1.into())),
                     ranking: 1,
                     clearing_prices: btreemap! {

@@ -484,6 +484,7 @@ impl RunLoop {
                 .map(|(index, participant)| SolverSettlement {
                     solver: participant.driver().name.clone(),
                     solver_address: participant.solution().solver().0,
+                    transaction_hash: None,
                     score: Some(Score::Solver(participant.solution().score().get().0)),
                     ranking: solutions.len() - index,
                     orders: participant
